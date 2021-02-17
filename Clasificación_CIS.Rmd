@@ -1,0 +1,283 @@
+---
+title: "Clasificación macrobarómetro de marzo 2019 (CIS 3242)"
+author: 'Autor: Daniel Núñez'
+date: "Abril 2019"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+******
+# Métodos no supervisados de agregación del voto con datos del CIS 
+******
+
+
+## kmeans
+Usamos los microdatos del CIS 3242 "MACROBARÓMETRO DE MARZO 2019. PREELECTORAL ELECCIONES GENERALES 2019".
+Vamos a utilizar métodos no supervisados de agregación para analizar el voto (se usa la variable Voto + simpatia, VOTOSIMG) usando las variables de probabilidad de votar en las siguientes elecciones (P28A), la autoubicacion ideologia (P19) y la edad del entrevistado (P23) como variables independientes. 
+Se reduce la base a solo las variables mencionados y ID de cada encuestado.
+
+```{r message= FALSE, warning=FALSE}
+#Cargamos librerias que podemos necesitar
+library(readxl)
+library(cluster)
+#Cargamos la base
+cis3242 <- read_excel("CIS3242.xlsx")
+```
+
+Revisamos la base en busca de error o necesidad de modificar algunas variables
+
+```{r message= FALSE, warning=FALSE}
+summary(cis3242)
+```
+
+Dado que tenemos en todas las variables valores como NS/NC, no recuerda ... se ira adaptando poco a poco la base.  
+Empezamos con el voto, el cual, habrá que simplificar entre los cinco principales partidos
+PP - 1, PSOE - 2 , UP (UP+confluencias) 21 + 6 + 37 + 10, Cs - 4 y Vox - 18. 
+El resto de opciones no se tendran en cuenta.  
+Vemos los valores que pueden tomar el resto de variables
+
+```{r message= FALSE, warning=FALSE}
+#Ordenamos y mostramos los valores que toma cada variable
+sort(unique(cis3242$VOTOSIMG))
+sort(unique(cis3242$Ideologia))
+sort(unique(cis3242$Edad))
+sort(unique(cis3242$ProbVoto))
+```
+
+Vemos que hay varias variables con perdidos o NSNC (98, 99...).  
+Empezamos recodificando la variable del voto como mencionamos anteriormente.
+
+```{r message= FALSE, warning=FALSE}
+#Recodificamos la variable de voto según cumplen las condiciones
+cis3242$votorec <- ifelse(cis3242$VOTOSIMG==1, 1, 
+                  ifelse(cis3242$VOTOSIMG==2, 2, 
+                         ifelse(cis3242$VOTOSIMG==21 | cis3242$VOTOSIMG==6 | cis3242$VOTOSIMG ==37 | cis3242$VOTOSIMG==10, 3,
+                                ifelse(cis3242$VOTOSIMG==4, 4, 
+                                       ifelse(cis3242$VOTOSIMG==18, 5,99)))))
+```
+
+Nos quedamos solo con los casos que dicen votar a uno de los 5 partidos y no tienen valores periddos o nsns
+
+```{r message= FALSE, warning=FALSE}
+cis3242 <- subset(cis3242, cis3242$votorec != 99 & cis3242$Ideologia != 98 & cis3242$Ideologia != 99 & cis3242$ProbVoto != 98 & cis3242$ProbVoto != 99   )
+```
+
+Revisamos que ya no tenemos perdidos
+
+```{r message= FALSE, warning=FALSE}
+summary(cis3242)
+str(cis3242)
+```
+
+Se observa que hay que factorizar la variable voto y le ponemos las etiquetas. Y lo volvemos a ver.
+
+```{r message= FALSE, warning=FALSE}
+cis3242$votorec <- factor(cis3242$votorec, levels=c(1,2,3,4,5), labels=c("PP", "PSOE", "UP", "Cs", "Vox"))
+str(cis3242)
+```
+
+Ya tenemos la base preparada. Con estos datos se podrían utulizar metodos supervisados ya que la variable voto tiene los grupo definidos, aun asi resulta interesante pensar que antes solo había 2 partidos mayoritarios y ahora hay 5 por lo que es curioso saber que diferencias hay entre los bloques ideologicos. Además, resulta interesante pasar el problema a un metodo no supervisado ya que los grupos que se asignen no tendrían por que ser los del voto. Aún así, la variable más importante será la ideologia para ver los grupos ideologicos según el partido que votarian.   
+Al no saber cuál es el número óptimo de clusters, probamos con varios valores. Nos quedamos solo con las tres columnas: edad, ideologia y probabilidad de votar.  
+
+```{r message= FALSE, warning=FALSE}
+#Seleccionamos solo las variables que vamos a usar
+cis3 <- cis3242[,2:4]
+
+#Se mete en un bucle para ir ver cual sería el mejor cluster
+resultados <- rep(0, 10)
+for (i in c(2,3,4,5,6,7,8,9,10))
+{
+  fit           <- kmeans(cis3, i)
+  resultados[i] <- fit$tot.withinss
+}
+
+#Visualizamos los resultados
+plot(2:10,resultados[2:10],type="o",col="blue",pch=0,xlab="Número de clusters",ylab="tot.tot.withinss")
+```
+
+Vemos que el número óptimo de cluster son 4 ya que ahi se empieza a estabilizar la curva. Ahora probamos con los criterios de la slueta media y Calinski-Harabasz
+
+```{r message= FALSE, warning=FALSE}
+#Cargamos la libreria
+library(fpc)
+
+#Usamos la funcion kmeansruns para ver los otros dos modelos
+fit_ch  <- kmeansruns(cis3, krange = 1:10, criterion = "ch") 
+fit_asw <- kmeansruns(cis3, krange = 1:10, criterion = "asw")
+
+#Vemos los valores de los dos modelos
+fit_ch$bestk
+fit_asw$bestk
+
+#Vemos en graficos los dos modelos
+plot(1:10,fit_ch$crit,type="o",col="blue",pch=0,xlab="Número de clústers",ylab="Criterio Calinski-Harabasz")
+plot(1:10,fit_asw$crit,type="o",col="blue",pch=0,xlab="Número de clústers",ylab="Criterio silueta media")
+```
+
+El método de la silueta media nos dice que el número óptimo de cluster son 2, el de Calinski-Harabasz son 7 y el de tot.tot.withinss 4.  
+Teniendo en cuenta que sabemos que historicamente ha habido 2 partidos, luego 4 y ahora cinco principales, probamos a ver que tal sale con 5, ya que son los grupos que tenemos ahora.
+
+```{r message= FALSE, warning=FALSE}
+#Calculamos el cluster con Kmean haciendo cinco grupos
+cis2clusters <- kmeans(cis3, 5)
+
+#Lo vemos con edad e ideologia
+plot(cis3[c(2,3)], col=cis2clusters$cluster)
+#Lo vemos con edad e ideologia
+plot(cis3[c(1,2)], col=cis2clusters$cluster)
+#Lo vemos con edad e ideologia
+plot(cis3[c(1,3)], col=cis2clusters$cluster)
+```
+
+Al probar directamente con Kmeans y visualizar los clusters, la división, indiferentemente de los grupos que se hagan, hace divisiones basadas en la edad.  
+Para intentar afinar un poco más en lo que nos interesa, que es la intención de voto, nos centraremos solo en la ideologia y la probabilidad de votar.  
+Repetimos el proceso anterior pero solo con estas dos variables.
+
+```{r message= FALSE, warning=FALSE}
+#Nos quedamos solo con ideologia y porbabilidad de votar
+cis3 <- cis3242[,2:3]
+
+#Vemos el numero de cluster optimo con tot.tot.withinss
+resultados <- rep(0, 10)
+for (i in c(2,3,4,5,6,7,8,9,10))
+{
+  fit           <- kmeans(cis3, i)
+  resultados[i] <- fit$tot.withinss
+}
+plot(2:10,resultados[2:10],type="o",col="blue",pch=0,xlab="Número de clusters",ylab="tot.tot.withinss")
+```
+
+Usando solo estas dos variables con el método tot.tot.withinss deberiamos de usar 3 cluster.  
+Probamos el resto de métodos nuevamente, pero solo con estas dos variables.
+
+```{r message= FALSE, warning=FALSE}
+fit_ch  <- kmeansruns(cis3, krange = 1:10, criterion = "ch") 
+fit_asw <- kmeansruns(cis3, krange = 1:10, criterion = "asw")
+fit_ch$bestk
+fit_asw$bestk
+plot(1:10,fit_ch$crit,type="o",col="blue",pch=0,xlab="Número de clústers",ylab="Criterio Calinski-Harabasz")
+plot(1:10,fit_asw$crit,type="o",col="blue",pch=0,xlab="Número de clústers",ylab="Criterio silueta media")
+```
+
+El método de  Calinski-Harabasz nos dice que el número de cluster óptimo son 8 y el de la silueta media son 10.  
+Probamos a hacer el cálulo con Kmeans en cinco grupo y comprobamos su acierto.
+
+```{r message= FALSE, warning=FALSE}
+set.seed(567)
+cis2clusters <- kmeans(cis3, 5)
+
+# sepalLength y sepalWidth
+plot(cis3[c(1,2)], col=cis2clusters$cluster)
+
+#Vemos en una tabla el cruce de los grupos creado con los grupo de la base original
+table(cis2clusters$cluster,cis3242$votorec)
+
+#Cruce cluster por ideologia
+table(cis2clusters$cluster,cis3242$Ideologia)
+
+#Acierto
+(1122+1597+99+258+18)/nrow(cis3242)*100
+
+```
+
+En la tabla podemos ver como en el grupo 4 del cluster corresponde al PP, el grupo 3 corresponde al PSOE y el 2 a Ciudadanos. Sin embargo el resto de grupos no son tan claros. Unidos Podemos se solapa en el grupo 3 con el PSOE que dentro de lo que cabe tiene sentido ya que pertecen al mismo bloque ideologico, lo mismo pasa con Vox ya que se solapa con el PP en el grupo 4 y parcialmente en el 2 con Ciudadanos.  
+Ya que los cluster no llegan a clasificar tanto, solo con la ideologia, que aunque sea lo que más pesa en el voto es más dificil hacerlo dentro del mismo bloque diferenciar solo con la ubicación ideologica la diferencia en PP y Ciudadnos, harian falta más variables para separarlos.  
+Viendo tabla del cluster e ideologia, se pueden ver claramente tres grupos, el grupo 3 que tienen ideologia de izquierdas (1-4), el grupo 2 con ideologia de centro (5-6) y el grupo 4 con ideologia de derechas (7-10)
+Ahora probaremos a hacer tres grupos, a ver como salen.  
+Aunque no quedan muy claros los grupo por Partido, podemos deducir que: PP=2, PSOE=1, UP=3, Cs=4 y por descarte Vox=5. Y con esto, que sería como maximizariamos el acierto con los grupo sque tenemos tendriamos un acierto de un 32%, resultado muy muy bajo.
+
+
+```{r message= FALSE, warning=FALSE}
+cis2clusters <- kmeans(cis3, 3)
+
+# sepalLength y sepalWidth
+plot(cis3[c(1,2)], col=cis2clusters$cluster)
+
+#Vemos en una tabla el cruce de los grupos creado con los grupo de la base original
+table(cis2clusters$cluster,cis3242$votorec)
+
+#Cruce cluster por ideologia
+table(cis2clusters$cluster,cis3242$Ideologia)
+
+#Cruce cluster por probabilidad de voto
+table(cis2clusters$cluster,cis3242$ProbVoto)
+```
+
+En el gráfico vemos como por un lado divide los grupo según más o menos probabilidad de votar, y dentro de los que tienen más probabilidad de votar entre izquierda y derecha.  
+
+Al cruzarlo por la base original, vemos como el grupo 3 corresponde con el PP, Ciudadnos y Vox, el grupo 2 corresponde con PSOE, UP y otra parte de Ciudadanos, y el grupo 1 queda un poco en tierra de nadie probablemente los que tienen menos probabilidad de votar.  
+En el cruce por ideologia, vemos como el grupo 3 es claramente votantes de derechas e ideologicamente a la derecha (más de 6), el grupo 2 claramente votantes de izquierdrda, algo que tienen sentido ya que se sabe que las personas ideologicamente de izqueirda se abstienen más que los de dechars.  
+Por último, vemos el cruce con la probabilidad de abstenerse. Lo cual reafirma lo mencionado antes, el grupo uno es claramente los que tienen menos probabilidad de votar, mientras que el 2 y el 3 los que tienen mayor probabilidad de votar.
+
+
+
+## CLARA
+
+> En la siguiente página (https://rpubs.com/Joaquin_AR/310338) se encuentra bastante información sobre cluster, entre ellos el Kmeans, pero también encontramos CLARA que es igual que M-medois pero para volumenes más grandes de datos como es el caso, también el metodo Kmedois es más robusto que Kmeans ya que le afectan menos los outliers
+
+```{r message= FALSE, warning=FALSE}
+#Cargamos la libreria
+library(factoextra)
+
+#Ejecutamos el metodo CLARA
+claracis <- clara(x = cis3, k = 5, metric = "manhattan", stand = TRUE,
+                        samples = 50, pamLike = TRUE)
+#Vemos el resutlado
+claracis
+
+#Realizamos un grafico
+fviz_cluster(object = claracis, ellipse.type = "t", geom = "point",
+             pointsize = 2) +
+  theme_bw() +
+  labs(title = "Resultados clustering CLARA") +
+  theme(legend.position = "none")
+
+#Vemos el resutlado en un tabla
+table(claracis$cluster,cis3242$votorec)
+
+#Acierto
+(1151+2469+6+858+44)/nrow(cis3242)*100
+```
+
+En este caso con CLARA, el resutlado parece algo más óptimo que kmeans. En este caso los grupos serian: PP=2, PSOE=3, UP=4, Cs=5 y Vox=1. Tendriamos un acierto de 46%, sigue siendo bastante bajo pero mejora más de 10 puntos el cluster de Kmeans. 
+
+## Hierarchical cluster
+
+Probamos con Hierarchical cluster donde no necesitamos preespecificar el número de grupos que queremos
+
+```{r message= FALSE, warning=FALSE}
+#Calculamos las distancias
+set.seed(101)
+matriz_distancias <- dist(x = cis3, method = "euclidean")
+
+set.seed(567)
+hc_euclidea_completo <- hclust(d = matriz_distancias, method = "complete")
+hc_euclidea_single   <- hclust(d = matriz_distancias, method = "single")
+hc_euclidea_average  <- hclust(d = matriz_distancias, method = "average")
+
+#Vemos el dendograma para ver cuales son los mejores corte para seleccionar los grupos
+par(mfrow = c(3,1))
+plot(x = hc_euclidea_completo, cex = 0.6, xlab = "", ylab = "", sub = "",
+     main = "Distancia euclídea, Linkage complete")
+plot(x = hc_euclidea_single, cex = 0.6, xlab = "", ylab = "", sub = "",
+     main = "Distancia euclídea, Linkage single")
+plot(x = hc_euclidea_average, cex = 0.6, xlab = "", ylab = "", sub = "",
+     main = "Distancia euclídea, Linkage average")
+
+```
+
+Aunque no se ven muy bien los dendogramas, parece que el númeor más optimo de clusters sería tres.  
+Aun asi pondremos cinco nuevamente para poder comparar los resultados con los cluster anteriores.  
+
+```{r message= FALSE, warning=FALSE}
+#Lo vemos en un atabla
+table(cutree(hc_euclidea_completo, k = 5), cis3242$votorec)
+```
+
+A primera vista, no parece ser la mejor opción, ya que la inmensa mayoria de las observaciones se van al 1 y el resto se reparte un poco por lo que no parece arrojar mucha luz.  
+En conclusión, harian falta alguna otra variable continua mas interesante, ademas de la ideologia para poder hacer con más precisión cluster respecto al voto, como por ejemplo una escala entre centralismo y autonomismo.
+
